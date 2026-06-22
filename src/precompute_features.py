@@ -101,6 +101,12 @@ import sys
 from pathlib import Path
 from typing import Iterator
 
+# Ensure project root is on sys.path so 'src.*' imports work whether this
+# module is invoked as 'python src/precompute_features.py' or 'python -m src.precompute_features'
+_PROJECT_ROOT_GUARD = Path(__file__).resolve().parent.parent
+if str(_PROJECT_ROOT_GUARD) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT_GUARD))
+
 import numpy as np
 import orjson
 import pandas as pd
@@ -375,7 +381,7 @@ def run_embeddings(
     jd_npy_path: Path = JD_EMBEDDING_NPY,
     cand_npy_path: Path = CANDIDATE_EMBEDDINGS_NPY,
     model_name: str = "all-MiniLM-L6-v2",
-    batch_size: int = 256,
+    batch_size: int = 512,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
     Encode the JD anchor text and all candidate text blobs using a
@@ -403,8 +409,13 @@ def run_embeddings(
         (jd_embedding, candidate_embeddings)
     """
     from sentence_transformers import SentenceTransformer
+    import torch
 
-    print(f"[embeddings] Loading model '{model_name}'…")
+    # Use all available CPU cores for PyTorch inference
+    n_threads = os.cpu_count() or 4
+    torch.set_num_threads(n_threads)
+
+    print(f"[embeddings] Loading model '{model_name}' (threads={n_threads})…")
     model = SentenceTransformer(model_name)
 
     # --- JD anchor embedding ---
