@@ -10,54 +10,77 @@ from the Job Description. The anchors include:
 """
 
 # ---------------------------------------------------------------------------
-# Canonical skill names that correspond to the JD's "Things you absolutely need"
-# and "Things we'd like you to have" sections.  The names here must be
-# case-insensitively comparable against a candidate's skills[*].name field.
+# JD_ANCHOR_TEXT — 5-6 sentences extracted from the "What you'd actually be
+# doing" / responsibilities section of job_description.docx.
+# This is the semantic anchor that candidate text blobs are compared against.
+# ---------------------------------------------------------------------------
+JD_ANCHOR_TEXT: str = (
+    "Own the intelligence layer of Redrob's product: the ranking, retrieval, "
+    "and matching systems that decide what recruiters see when they search for "
+    "candidates and what candidates see when they search for roles. "
+    "Ship a v2 ranking system that demonstrably improves recruiter-engagement "
+    "metrics using embeddings, hybrid retrieval, and LLM-based re-ranking. "
+    "Set up evaluation infrastructure including offline benchmarks, online A/B "
+    "testing, and recruiter-feedback loops. "
+    "Drive the long-term architecture of candidate-JD matching at scale, "
+    "mentoring the next round of hires and working closely with the "
+    "recruiter-experience PM. "
+    "Audit the current BM25 plus rule-based scoring system and identify the "
+    "highest-leverage improvements. "
+    "Deep technical depth in modern ML systems including embeddings, retrieval, "
+    "ranking, LLMs, and fine-tuning combined with a scrappy product-engineering "
+    "attitude to ship fast and iterate with real users."
+)
+
+# ---------------------------------------------------------------------------
+# JD_REQUIRED_SKILLS — skill names from the JD's "Things you absolutely need"
+# and "Things we'd like you to have" sections, normalized to lowercase.
+# These are matched case-insensitively against candidate skills[*].name.
 # ---------------------------------------------------------------------------
 JD_REQUIRED_SKILLS: list[str] = [
     # Core retrieval / embedding systems
-    "Embeddings",
-    "Sentence Transformers",
-    "Vector Search",
-    "Information Retrieval",
-    "Semantic Search",
-    "BM25",
-    "Hybrid Search",
+    "embeddings",
+    "sentence transformers",
+    "vector search",
+    "information retrieval",
+    "semantic search",
+    "bm25",
+    "hybrid search",
     # Vector DBs / indexes
-    "Pinecone",
-    "Weaviate",
-    "Qdrant",
-    "Milvus",
-    "FAISS",
-    "Elasticsearch",
-    "OpenSearch",
+    "pinecone",
+    "weaviate",
+    "qdrant",
+    "milvus",
+    "faiss",
+    "elasticsearch",
+    "opensearch",
     # Ranking / recommendation
-    "Ranking",
-    "Recommendation Systems",
-    "Learning to Rank",
-    "XGBoost",
+    "ranking",
+    "recommendation systems",
+    "learning to rank",
+    "xgboost",
     # LLM / NLP
-    "NLP",
-    "LLM",
-    "Hugging Face Transformers",
-    "Fine-tuning LLMs",
-    "LoRA",
-    "QLoRA",
-    "PEFT",
-    "RAG",
-    "Retrieval Augmented Generation",
+    "nlp",
+    "llm",
+    "hugging face transformers",
+    "fine-tuning llms",
+    "lora",
+    "qlora",
+    "peft",
+    "rag",
+    "retrieval augmented generation",
     # Evaluation
-    "NDCG",
-    "A/B Testing",
+    "ndcg",
+    "a/b testing",
     # Core platform / infra
-    "Python",
-    "PyTorch",
-    "TensorFlow",
+    "python",
+    "pytorch",
+    "tensorflow",
     "scikit-learn",
 ]
 
-# Set version for O(1) membership tests (names lower-cased for matching)
-JD_REQUIRED_SKILLS_LOWER: set[str] = {s.lower() for s in JD_REQUIRED_SKILLS}
+# Set version for O(1) membership tests (already lowercase)
+JD_REQUIRED_SKILLS_LOWER: set[str] = set(JD_REQUIRED_SKILLS)
 
 # Keywords that appear in the JD as experience signals used by precompute_features
 RELEVANCE_KEYWORDS: list[str] = [
@@ -90,8 +113,9 @@ def load_jd_anchors() -> dict:
     -------
     dict
         Keys:
-        - required_skills (list[str]): Canonical JD required/preferred skill names.
-        - required_skills_lower (set[str]): Lower-cased version for fast lookup.
+        - jd_anchor_text (str): Semantic anchor text describing the role responsibilities.
+        - required_skills (list[str]): Canonical JD required/preferred skill names (lowercase).
+        - required_skills_lower (set[str]): Same as required_skills, as a set for fast lookup.
         - relevance_keywords (list[str]): Keywords that signal relevant ML/IR experience.
         - experience_min_years (int): Minimum years of experience considered in range.
         - experience_max_years (int): Maximum years of experience considered in range.
@@ -102,6 +126,7 @@ def load_jd_anchors() -> dict:
         - relevance_industry_keywords (list[str]): Industry names considered relevant.
     """
     return {
+        "jd_anchor_text": JD_ANCHOR_TEXT,
         "required_skills": JD_REQUIRED_SKILLS,
         "required_skills_lower": JD_REQUIRED_SKILLS_LOWER,
         "relevance_keywords": RELEVANCE_KEYWORDS,

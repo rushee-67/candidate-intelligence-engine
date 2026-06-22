@@ -97,14 +97,16 @@ from __future__ import annotations
 import io
 import math
 import os
+import sys
 from pathlib import Path
 from typing import Iterator
 
+import numpy as np
 import orjson
 import pandas as pd
 import yaml
 
-from src.jd_anchor import JD_REQUIRED_SKILLS_LOWER, RELEVANCE_KEYWORDS
+from src.jd_anchor import JD_ANCHOR_TEXT, JD_REQUIRED_SKILLS_LOWER, RELEVANCE_KEYWORDS
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -114,6 +116,8 @@ CONFIG_PATH = PROJECT_ROOT / "config" / "weights.yaml"
 CANDIDATES_JSONL = PROJECT_ROOT / "resources" / "candidates.jsonl"
 OUTPUT_DIR = PROJECT_ROOT / "data" / "artifacts"
 OUTPUT_PARQUET = OUTPUT_DIR / "candidate_features.parquet"
+JD_EMBEDDING_NPY = OUTPUT_DIR / "jd_embedding.npy"
+CANDIDATE_EMBEDDINGS_NPY = OUTPUT_DIR / "candidate_embeddings.npy"
 
 
 # ---------------------------------------------------------------------------
@@ -362,7 +366,164 @@ def features_from_list(
     return df
 
 
+# ---------------------------------------------------------------------------
+# Embedding computation
+# ---------------------------------------------------------------------------
+
+def run_embeddings(
+    parquet_path: Path = OUTPUT_PARQUET,
+    jd_npy_path: Path = JD_EMBEDDING_NPY,
+    cand_npy_path: Path = CANDIDATE_EMBEDDINGS_NPY,
+    model_name: str = "all-MiniLM-L6-v2",
+    batch_size: int = 256,
+) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Encode the JD anchor text and all candidate text blobs using a
+    sentence-transformer model, then persist the embeddings as .npy files.
+
+    This function downloads the model on first run (network required for
+    precompute; the ranking step itself is offline).
+
+    Parameters
+    ----------
+    parquet_path : Path
+        Path to the candidate features parquet (must already exist).
+    jd_npy_path : Path
+        Output path for the JD embedding (shape (384,)).
+    cand_npy_path : Path
+        Output path for candidate embeddings (shape (N, 384)).
+    model_name : str
+        HuggingFace model identifier for the sentence-transformer.
+    batch_size : int
+        Encoding batch size (controls memory vs speed trade-off).
+
+    Returns
+    -------
+    tuple[np.ndarray, np.ndarray]
+        (jd_embedding, candidate_embeddings)
+    """
+    from sentence_transformers import SentenceTransformer
+
+    print(f"[embeddings] Loading model '{model_name}'…")
+    model = SentenceTransformer(model_name)
+
+    # --- JD anchor embedding ---
+    print("[embeddings] Encoding JD anchor text…")
+    jd_emb: np.ndarray = model.encode(
+        JD_ANCHOR_TEXT,
+        convert_to_numpy=True,
+        show_progress_bar=False,
+    )
+    jd_npy_path.parent.mkdir(parents=True, exist_ok=True)
+    np.save(jd_npy_path, jd_emb)
+    print(f"[embeddings] Saved JD embedding → {jd_npy_path}  shape={jd_emb.shape}")
+
+    # --- Candidate text blob embeddings ---
+    print(f"[embeddings] Loading candidate blobs from {parquet_path}…")
+    df = pd.read_parquet(parquet_path, columns=["candidate_text_blob"])
+    blobs: list[str] = df["candidate_text_blob"].fillna("").tolist()
+    print(f"[embeddings] Encoding {len(blobs)} candidate text blobs (batch_size={batch_size})…")
+
+    cand_embs: np.ndarray = model.encode(
+        blobs,
+        batch_size=batch_size,
+        show_progress_bar=True,
+        convert_to_numpy=True,
+    )
+    np.save(cand_npy_path, cand_embs)
+    print(f"[embeddings] Saved candidate embeddings → {cand_npy_path}  shape={cand_embs.shape}")
+
+    return jd_emb, cand_embs
+
+
+# ---------------------------------------------------------------------------
+# Main orchestrator
+# ---------------------------------------------------------------------------
+
+def main() -> None:
+    """
+    Run the full precompute pipeline in order:
+      1. Flatten candidates.jsonl → candidate_features.parquet
+      2. Honeypot audit           → update parquet with is_honeypot
+      3. Disqualifier filters     → update parquet with is_hard_disqualified + soft_negative_modifier
+      4. Embedding computation    → jd_embedding.npy + candidate_embeddings.npy
+
+    Usage:
+        python src/precompute_features.py
+    """
+    import time
+
+    t0 = time.perf_counter()
+
+    # --- Step 1: Flatten ---
+    print("="*72)
+    print("STEP 1/4 · Flattening candidates → Parquet")
+    print("="*72)
+    weights = _load_weights()
+
+    # We need the raw candidate dicts for steps 2 & 3, so we collect them
+    # while streaming — memory cost is acceptable for 100K records.
+    raw_candidates: list[dict] = []
+    rows: list[dict] = []
+    total = 0
+
+    for candidate in _iter_jsonl(CANDIDATES_JSONL):
+        raw_candidates.append(candidate)
+        rows.append(extract_candidate_features(candidate, weights))
+        total += 1
+        if total % 10_000 == 0:
+            print(f"  … processed {total:,} candidates")
+
+    print(f"  Total candidates: {total:,}")
+    df = pd.DataFrame(rows)
+    df["last_active_date"] = pd.to_datetime(df["last_active_date"], errors="coerce")
+    for col in ("open_to_work_flag", "willing_to_relocate", "verified_email",
+                "verified_phone", "linkedin_connected"):
+        df[col] = df[col].astype(bool)
+
+    OUTPUT_PARQUET.parent.mkdir(parents=True, exist_ok=True)
+    df.to_parquet(OUTPUT_PARQUET, index=False, engine="pyarrow")
+    print(f"  Saved → {OUTPUT_PARQUET}  shape={df.shape}")
+
+    # --- Step 2: Honeypot audit ---
+    print()
+    print("="*72)
+    print("STEP 2/4 · Honeypot audit")
+    print("="*72)
+    from src.honeypot_audit import add_honeypot_column
+    df = add_honeypot_column(df, raw_candidates, weights)
+    df.to_parquet(OUTPUT_PARQUET, index=False, engine="pyarrow")
+    honeypot_n = int(df["is_honeypot"].sum())
+    print(f"  Honeypots flagged: {honeypot_n}/{len(df)}")
+
+    # --- Step 3: Disqualifier filters ---
+    print()
+    print("="*72)
+    print("STEP 3/4 · Disqualifier filters")
+    print("="*72)
+    from src.disqualifier_filters import add_disqualifier_columns
+    df = add_disqualifier_columns(df, raw_candidates, weights)
+    df.to_parquet(OUTPUT_PARQUET, index=False, engine="pyarrow")
+    hard_n = int(df["is_hard_disqualified"].sum())
+    print(f"  Hard-disqualified: {hard_n}/{len(df)}")
+    print(f"  Soft-modifier distribution:\n{df['soft_negative_modifier'].value_counts().sort_index().to_string()}")
+
+    # --- Step 4: Embeddings ---
+    print()
+    print("="*72)
+    print("STEP 4/4 · Embedding computation")
+    print("="*72)
+    jd_emb, cand_embs = run_embeddings()
+    print(f"  JD embedding shape:        {jd_emb.shape}")
+    print(f"  Candidate embeddings shape: {cand_embs.shape}")
+
+    elapsed = time.perf_counter() - t0
+    print()
+    print(f"✓ Precompute pipeline complete in {elapsed:.1f}s")
+    print(f"  Parquet : {OUTPUT_PARQUET}")
+    print(f"  JD emb  : {JD_EMBEDDING_NPY}")
+    print(f"  Cand emb: {CANDIDATE_EMBEDDINGS_NPY}")
+
+
 if __name__ == "__main__":
-    df = precompute_all_features()
-    print(df.dtypes)
-    print(df.head(3))
+    main()
