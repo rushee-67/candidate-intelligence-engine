@@ -1,0 +1,30 @@
+title_score_weight: 0.40
+skill_trust_weight: 0.25
+experience_score_weight: 0.20
+soft_negative_weight: 0.10
+location_score_weight: 0.05
+availability_floor: 0.5
+availability_range: 0.5
+skill_proficiency_weights:
+  beginner: 0.25
+  intermediate: 0.50
+  advanced: 0.75
+  expert: 1.00
+skill_trust_endorsement_scale: 20
+skill_trust_duration_cap_months: 24
+experience_relevance_cap_months: 60
+soft_negative_floor: 0.4
+soft_negative_penalty_per_flag: 0.15
+honeypot_expert_duration_threshold_months: 6
+honeypot_career_months_tolerance: 18
+honeypot_min_flags_to_exclude: 2
+location_scores:
+  pune: 1.0
+  noida: 1.0
+  hyderabad: 0.8
+  mumbai: 0.8
+  delhi: 0.8
+  ncr: 0.8
+  other_india: 0.5
+  outside_india: 0.1
+recency_decay_days: 180
