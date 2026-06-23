@@ -387,6 +387,9 @@ def run_embeddings(
     Encode the JD anchor text and all candidate text blobs using a
     sentence-transformer model, then persist the embeddings as .npy files.
 
+    Supports checkpoint/resume: progress is saved every 10 batches so an
+    interrupted run can be restarted without re-encoding from scratch.
+
     This function downloads the model on first run (network required for
     precompute; the ranking step itself is offline).
 
@@ -408,6 +411,7 @@ def run_embeddings(
     tuple[np.ndarray, np.ndarray]
         (jd_embedding, candidate_embeddings)
     """
+    import time as _time
     from sentence_transformers import SentenceTransformer
     import torch
 
@@ -429,20 +433,75 @@ def run_embeddings(
     np.save(jd_npy_path, jd_emb)
     print(f"[embeddings] Saved JD embedding → {jd_npy_path}  shape={jd_emb.shape}")
 
-    # --- Candidate text blob embeddings ---
+    # --- Candidate text blob embeddings (checkpoint / resume) ---
     print(f"[embeddings] Loading candidate blobs from {parquet_path}…")
-    df = pd.read_parquet(parquet_path, columns=["candidate_text_blob"])
-    blobs: list[str] = df["candidate_text_blob"].fillna("").tolist()
-    print(f"[embeddings] Encoding {len(blobs)} candidate text blobs (batch_size={batch_size})…")
+    df_blobs = pd.read_parquet(parquet_path, columns=["candidate_text_blob"])
+    blobs: list[str] = df_blobs["candidate_text_blob"].fillna("").tolist()
+    n_total = len(blobs)
 
-    cand_embs: np.ndarray = model.encode(
-        blobs,
-        batch_size=batch_size,
-        show_progress_bar=True,
-        convert_to_numpy=True,
+    # Checkpoint: accumulates rows encoded so far; survives interruptions
+    ckpt_path = cand_npy_path.with_suffix(".ckpt.npy")
+    encoded_chunks: list[np.ndarray] = []
+    start_idx = 0
+
+    if ckpt_path.exists():
+        partial = np.load(ckpt_path)
+        start_idx = len(partial)
+        encoded_chunks.append(partial)
+        print(f"[embeddings] Resuming from checkpoint — {start_idx}/{n_total} already done")
+
+    remaining = blobs[start_idx:]
+    checkpoint_every = 10          # flush to disk every 10 batches (~5 120 candidates)
+    buffer: list[np.ndarray] = []
+    batch_num = 0
+    t0 = _time.perf_counter()
+
+    print(
+        f"[embeddings] Encoding {len(remaining)} remaining blobs "
+        f"(batch_size={batch_size})…"
     )
+
+    for i in range(0, len(remaining), batch_size):
+        chunk = remaining[i: i + batch_size]
+        emb_chunk: np.ndarray = model.encode(
+            chunk,
+            batch_size=len(chunk),
+            show_progress_bar=False,
+            convert_to_numpy=True,
+        )
+        buffer.append(emb_chunk)
+        batch_num += 1
+
+        done    = start_idx + i + len(chunk)
+        elapsed = _time.perf_counter() - t0
+        rate    = max((done - start_idx) / elapsed, 1e-6)
+        eta     = (n_total - done) / rate
+        print(
+            f"  [{done:>7}/{n_total}]  {rate:>5.0f} cands/s  "
+            f"ETA {eta/60:>5.1f}min",
+            flush=True,
+        )
+
+        # Checkpoint flush every checkpoint_every batches
+        if batch_num % checkpoint_every == 0:
+            encoded_chunks.extend(buffer)
+            buffer = []
+            partial_embs = np.vstack(encoded_chunks)
+            np.save(ckpt_path, partial_embs)
+            print(f"  [ckpt] {len(partial_embs)} rows saved → {ckpt_path}", flush=True)
+
+    # Final flush of any remaining buffer
+    if buffer:
+        encoded_chunks.extend(buffer)
+
+    cand_embs: np.ndarray = np.vstack(encoded_chunks)
     np.save(cand_npy_path, cand_embs)
     print(f"[embeddings] Saved candidate embeddings → {cand_npy_path}  shape={cand_embs.shape}")
+
+    # Remove checkpoint — final file is written
+    if ckpt_path.exists():
+        ckpt_path.unlink()
+        print(f"[embeddings] Checkpoint removed.")
 
     return jd_emb, cand_embs
 
