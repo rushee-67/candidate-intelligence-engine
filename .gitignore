@@ -10,3 +10,4 @@ venv/
 resources/
 data/
 nohup.out
+scripts/
