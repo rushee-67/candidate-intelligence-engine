@@ -66,15 +66,15 @@ Execute the pipeline commands in order:
 
 The final score is calculated using the following formulas and parameters:
 
-$$base\_fit = 0.40 \cdot title\_score + 0.25 \cdot skill\_trust\_norm + 0.20 \cdot experience\_score + 0.10 \cdot soft\_modifier + 0.05 \cdot location\_score$$
+$$\text{base-fit} = 0.40 \cdot \text{title-score} + 0.25 \cdot \text{skill-trust-norm} + 0.20 \cdot \text{experience-score} + 0.10 \cdot \text{soft-modifier} + 0.05 \cdot \text{location-score}$$
 
 ### Scoring Component Details:
 1. **Title Score (`weight: 0.40`):** Map cosine similarity of candidate text-blob vs JD responsibility text from $[-1, 1]$ to $[0, 1]$:
-   $$title\_score = \frac{cosine\_sim + 1.0}{2.0}$$
+   $$\text{title-score} = \frac{\text{cosine-sim} + 1.0}{2.0}$$
 2. **Skill Trust (`weight: 0.25`):** Normalizes total skill trust score:
-   $$skill\_trust\_norm = \min\left(1.0, \frac{\text{skill\_trust\_score}}{2.0}\right)$$
+   $$\text{skill-trust-norm} = \min\left(1.0, \frac{\text{skill-trust-score}}{2.0}\right)$$
    Where each JD-matched skill $i$ is scored in `src/precompute_features.py` as:
-   $$trust_i = \text{proficiency\_weight} \cdot \left(1.0 + \text{endorse\_boost}\right) \cdot \text{dur\_factor}$$
+   $$\text{trust}_i = \text{proficiency-weight} \cdot \left(1.0 + \text{endorse-boost}\right) \cdot \text{dur-factor}$$
    The exact lines used in `src/precompute_features.py` to compute `endorse_boost` and the resulting `trust_i` are:
    ```python
    endorse_boost = min((skill.get("endorsements") or 0) / endorse_scale, 1.0)
@@ -83,19 +83,19 @@ $$base\_fit = 0.40 \cdot title\_score + 0.25 \cdot skill\_trust\_norm + 0.20 \cd
    ```
    *(proficiency weights: beginner = 0.25, intermediate = 0.50, advanced = 0.75, expert = 1.00)*
 3. **Experience Score (`weight: 0.20`):** Linear cap at 60 months of relevant experience:
-   $$\text{experience\_score} = \min\left(1.0, \frac{\text{relevant\_exp\_months}}{60}\right)$$
+   $$\text{experience-score} = \min\left(1.0, \frac{\text{relevant-exp-months}}{60}\right)$$
 4. **Soft-Negative Modifier (`weight: 0.10`):** Penalty multiplier applied from disqualifier flags:
-   $$\text{soft\_modifier} = \max\left(0.4, 1.0 - 0.15 \cdot \text{num\_soft\_flags}\right)$$
+   $$\text{soft-modifier} = \max\left(0.4, 1.0 - 0.15 \cdot \text{num-soft-flags}\right)$$
 5. **Location Score (`weight: 0.05`):** Suitability score mapped by city (Noida/Pune = 1.0; Delhi/NCR/Hyderabad/Mumbai = 0.8; Other India = 0.5; Outside India = 0.1).
 
 ### Availability Multiplier:
 Candidates are scaled by active and behavioral engagement signals, floored at `0.5` and capped at `1.0`:
-$$\text{availability\_multiplier} = 0.5 + 0.5 \cdot \text{mean}(\text{recency}, \text{engagement})$$
+$$\text{availability-multiplier} = 0.5 + 0.5 \cdot \text{mean}(\text{recency}, \text{engagement})$$
 * **Recency:** `1.0` if candidate active within last 30 days, linear decay to `0.0` at 180 days.
 * **Engagement:** Mean of recruiter response rate, interview completion rate, candidate open to work flag (`1.0` if True, `0.3` if False), and offer acceptance rate (omitted if `-1.0`).
 
 ### Final Score:
-$$final\_score = \begin{cases} 0.0 & \text{if } is\_honeypot \text{ or } is\_hard\_disqualified \\ base\_fit \cdot \text{availability\_multiplier} & \text{otherwise} \end{cases}$$
+$$\text{final-score} = \begin{cases} 0.0 & \text{if } \text{is-honeypot} \text{ or } \text{is-hard-disqualified} \\ \text{base-fit} \cdot \text{availability-multiplier} & \text{otherwise} \end{cases}$$
 
 ---
 
