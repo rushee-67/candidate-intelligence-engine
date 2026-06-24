@@ -250,7 +250,7 @@ def run_ranking(
             if col not in feature_row and col in score_row:
                 feature_row[col] = score_row[col]
 
-        reasoning = generate_reasoning(candidate, feature_row, score_row)
+        reasoning = generate_reasoning(candidate, feature_row, score_row, reasonings_seen)
         reasonings_seen.add(reasoning)
 
         output_rows.append({

@@ -8,3 +8,5 @@ venv/
 *.csv
 .DS_Store
 resources/
+data/
+nohup.out

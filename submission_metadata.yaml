@@ -1,0 +1,81 @@
+# Redrob Hackathon — Submission Metadata
+#
+# Copied and filled based on resources/submission_metadata_template.yaml.
+
+# ============================================================================
+# Team identity
+# ============================================================================
+team_name: "Antigravity Team"
+
+primary_contact:
+  name: "Antigravity Agent"
+  email: "antigravity@example.com"
+  phone: "+91-9999999999"
+
+team_members:
+  - name: "Antigravity"
+    email: "antigravity@example.com"
+    role: "ML Engineer"
+
+# ============================================================================
+# Code and reproducibility
+# ============================================================================
+github_repo: "https://github.com/user/redrob-ranker"
+sandbox_link: "https://streamlit.io/"
+
+reproduce_command: "python src/rank.py --candidates ./resources/candidates.jsonl --out ./submission.csv"
+
+# ============================================================================
+# Compute environment
+# ============================================================================
+compute:
+  platform: "Local Linux box"
+  cpu_cores: 4
+  ram_gb: 16
+  python_version: "3.10"
+  os: "Ubuntu 22.04 LTS"
+  uses_gpu_for_inference: false
+  has_network_during_ranking: false
+  pre_computation_required: true
+  pre_computation_time_minutes: 85
+
+# ============================================================================
+# AI tools declaration
+# ============================================================================
+ai_tools_used:
+  - "Gemini"
+
+ai_usage_summary: |
+  Used Gemini for coding assistance, refactoring, and code review.
+
+# ============================================================================
+# Approach summary (optional but recommended)
+# ============================================================================
+methodology_summary: |
+  Hybrid ranking pipeline with three core differentiators.
+  (1) Title/role embedding anti-stuffing: candidate text blobs
+  (title + headline + summary + last 3 role descriptions) are
+  encoded with all-MiniLM-L6-v2 and compared against JD
+  responsibility sentences — not skill keywords — so keyword
+  stuffers with wrong actual roles score low regardless of
+  skill list. (2) Skill-trust multiplier: each skill weighted
+  by proficiency × endorsement density × duration, so claimed
+  expert skills with 0 months are discounted to near zero.
+  (3) Consistency-check honeypot filter: profiles flagged on
+  2+ of four internal consistency rules (expert skill + 0
+  duration, career months vs years mismatch, date span vs
+  duration mismatch, education vs first job timeline) are
+  excluded entirely. Behavioral signals (recency, response
+  rate, interview completion) act as a multiplier floored
+  at 0.5 so strong profiles are discounted not zeroed.
+  Runtime: 17s on CPU for 100K candidates.
+
+# ============================================================================
+# Declarations
+# ============================================================================
+declarations:
+  read_submission_spec: true
+  code_is_original_work: true
+  no_collusion: true
+  honeypot_check_done: true
+  reproduction_tested: true

@@ -147,10 +147,72 @@ def _concern_clause(candidate: dict, feature_row: dict) -> str:
 # Primary public function
 # ---------------------------------------------------------------------------
 
+def _get_secondary_fact(
+    candidate: dict,
+    feature_row: dict,
+    existing_reasonings: set[str],
+    base_res: str,
+) -> str:
+    """
+    Return a secondary fact clause to deduplicate the reasoning string.
+    Tries github_activity_score, notice_period_days, connection_count, and
+    preferred_work_mode in order.
+    """
+    signals = candidate.get("redrob_signals") or {}
+
+    # 1. github_activity_score
+    github = signals.get("github_activity_score")
+    if github is None:
+        github = feature_row.get("github_activity_score", -1)
+    if github is not None and github != -1:
+        candidate_fact = f"Github activity score is {github}."
+        if f"{base_res} {candidate_fact}" not in existing_reasonings:
+            return candidate_fact
+
+    # 2. notice_period_days
+    notice = signals.get("notice_period_days")
+    if notice is None:
+        notice = feature_row.get("notice_period_days")
+    if notice is not None and notice > 0:
+        candidate_fact = f"Notice period is {notice} days."
+        if f"{base_res} {candidate_fact}" not in existing_reasonings:
+            return candidate_fact
+
+    # 3. connection_count
+    conn = signals.get("connection_count")
+    if conn is not None:
+        candidate_fact = f"Connection count: {conn}."
+        if f"{base_res} {candidate_fact}" not in existing_reasonings:
+            return candidate_fact
+
+    # 4. preferred_work_mode
+    mode = signals.get("preferred_work_mode")
+    if not mode:
+        mode = feature_row.get("preferred_work_mode")
+    if mode:
+        mode_str = str(mode).capitalize()
+        candidate_fact = f"Preferred work mode: {mode_str}."
+        if f"{base_res} {candidate_fact}" not in existing_reasonings:
+            return candidate_fact
+
+    # Fallback to any first available even if duplicate (should not happen)
+    if github is not None and github != -1:
+        return f"Github activity score is {github}."
+    if notice is not None and notice > 0:
+        return f"Notice period is {notice} days."
+    if conn is not None:
+        return f"Connection count: {conn}."
+    if mode:
+        return f"Preferred work mode: {str(mode).capitalize()}."
+
+    return ""
+
+
 def generate_reasoning(
     candidate: dict,
     feature_row: dict,
     score_row: dict,
+    existing_reasonings: set[str] | None = None,
 ) -> str:
     """
     Generate a 1-2 sentence ranking justification for one candidate.
@@ -166,6 +228,8 @@ def generate_reasoning(
     score_row : dict
         The scored row (output of compute_scores).  Must contain at minimum:
         title_score, skill_trust_norm, experience_score.
+    existing_reasonings : set[str], optional
+        A set of already generated reasoning strings to ensure uniqueness.
 
     Returns
     -------
@@ -221,8 +285,16 @@ def generate_reasoning(
 
     # ---- Append concern clause ---------------------------------------------
     if concern:
-        return f"{sentence} {concern}"
-    return sentence
+        base_res = f"{sentence} {concern}"
+    else:
+        base_res = sentence
+
+    if existing_reasonings is not None and base_res in existing_reasonings:
+        fact = _get_secondary_fact(candidate, feature_row, existing_reasonings, base_res)
+        if fact:
+            return f"{base_res} {fact}"
+
+    return base_res
 
 
 # ---------------------------------------------------------------------------
@@ -263,10 +335,13 @@ def generate_reasoning_batch(
     }
 
     reasons: list[str] = []
+    seen: set[str] = set()
     for score_row in scored_df.to_dict(orient="records"):
         cid = score_row["candidate_id"]
         candidate = cand_index.get(cid, {})
         feature_row = feature_index.get(cid, {})
-        reasons.append(generate_reasoning(candidate, feature_row, score_row))
+        reasoning = generate_reasoning(candidate, feature_row, score_row, seen)
+        seen.add(reasoning)
+        reasons.append(reasoning)
 
     return reasons
