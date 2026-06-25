@@ -290,6 +290,70 @@ def compute_scores(
     final_score: np.ndarray = np.where(excluded, 0.0, base_fit * availability)
 
     # ------------------------------------------------------------------ #
+    # 9.5. Two-stage Cross-Encoder Re-ranking on Top 1,000 Candidates     #
+    # ------------------------------------------------------------------ #
+    xe_model_dir = Path(CONFIG_PATH).parent.parent / "data" / "artifacts" / "cross_encoder_model"
+    if xe_model_dir.exists():
+        print(f"[scoring] Running second-stage Cross-Encoder re-ranking on top 1000 candidates...")
+        # Get indices of top 1000 candidates based on first-stage final_score
+        # We only re-rank candidate indices that are eligible (final_score > 0)
+        sorted_indices = np.argsort(-final_score)
+        
+        eligible_indices = [idx for idx in sorted_indices if final_score[idx] > 0]
+        re_rank_indices = eligible_indices[:1000]
+        
+        if re_rank_indices:
+            from sentence_transformers import CrossEncoder
+            
+            # Load cross-encoder model offline
+            xe_model = CrossEncoder(str(xe_model_dir))
+            
+            # Prepare texts
+            from src.jd_anchor import JD_ANCHOR_TEXT
+            candidate_blobs = df["candidate_text_blob"].fillna("").to_numpy()
+            
+            pairs = [
+                (JD_ANCHOR_TEXT, candidate_blobs[idx])
+                for idx in re_rank_indices
+            ]
+            
+            # Predict scores
+            raw_scores = xe_model.predict(
+                pairs,
+                batch_size=256,
+                show_progress_bar=False,
+                convert_to_numpy=True
+            )
+            
+            # Normalize to [0, 1] using MinMax scaling over this set
+            min_s = float(np.min(raw_scores))
+            max_s = float(np.max(raw_scores))
+            if max_s - min_s > 1e-5:
+                norm_scores = (raw_scores - min_s) / (max_s - min_s)
+            else:
+                norm_scores = np.zeros_like(raw_scores)
+                
+            # Update title_score, base_fit, and final_score for these candidates
+            for idx, norm_score in zip(re_rank_indices, norm_scores):
+                title_score[idx] = norm_score
+                
+                # Recalculate base_fit
+                base_fit[idx] = (
+                    w_title * title_score[idx]
+                    + w_skill * skill_trust_norm[idx]
+                    + w_exp * experience_score[idx]
+                    + w_soft * soft_modifier[idx]
+                    + w_loc * location_score[idx]
+                )
+                
+                # Recalculate final_score
+                final_score[idx] = base_fit[idx] * availability[idx]
+                
+            print(f"[scoring] Re-ranking of top {len(re_rank_indices)} candidates complete.")
+    else:
+        print("[scoring] WARNING: Cross-Encoder model directory not found. Skipping Stage 2 re-ranking.")
+
+    # ------------------------------------------------------------------ #
     # 10. Assemble result DataFrame                                        #
     # ------------------------------------------------------------------ #
     result = df[["candidate_id"]].copy().reset_index(drop=True)

@@ -422,6 +422,14 @@ def run_embeddings(
     print(f"[embeddings] Loading model '{model_name}' (threads={n_threads})…")
     model = SentenceTransformer(model_name)
 
+    # --- Cross-Encoder model caching ---
+    print("[embeddings] Loading and caching Cross-Encoder model...")
+    from sentence_transformers import CrossEncoder
+    xe_model = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
+    xe_model_dir = parquet_path.parent / "cross_encoder_model"
+    xe_model.save(str(xe_model_dir))
+    print(f"[embeddings] Saved Cross-Encoder model to {xe_model_dir}")
+
     # --- JD anchor embedding ---
     print("[embeddings] Encoding JD anchor text…")
     jd_emb: np.ndarray = model.encode(
@@ -438,6 +446,23 @@ def run_embeddings(
     df_blobs = pd.read_parquet(parquet_path, columns=["candidate_text_blob"])
     blobs: list[str] = df_blobs["candidate_text_blob"].fillna("").tolist()
     n_total = len(blobs)
+
+    # Early exit if candidate embeddings are already fully computed
+    if cand_npy_path.exists():
+        try:
+            cand_embs = np.load(cand_npy_path)
+            if len(cand_embs) == n_total:
+                print(f"[embeddings] {cand_npy_path} already complete. Skipping encoding.")
+                xe_model_dir = parquet_path.parent / "cross_encoder_model"
+                if not xe_model_dir.exists():
+                    print("[embeddings] Loading and caching Cross-Encoder model...")
+                    from sentence_transformers import CrossEncoder
+                    xe_model = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
+                    xe_model.save(str(xe_model_dir))
+                    print(f"[embeddings] Saved Cross-Encoder model to {xe_model_dir}")
+                return jd_emb, cand_embs
+        except Exception as e:
+            print(f"[embeddings] Error checking candidate embeddings file: {e}. Will recompute.")
 
     # Checkpoint: accumulates rows encoded so far; survives interruptions
     ckpt_path = cand_npy_path.with_suffix(".ckpt.npy")

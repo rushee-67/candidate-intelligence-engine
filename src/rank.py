@@ -85,14 +85,14 @@ def _load_jsonl(path: Path) -> list[dict]:
     return candidates
 
 
-def _ensure_artifacts(candidates_path: Path, weights: dict) -> list[dict]:
+def _ensure_artifacts(candidates_path: Path, weights: dict) -> None:
     """
     If any precomputed artifact is missing, run the full precompute pipeline.
-    Returns the raw candidate list (needed for reasoning).
     """
     missing = not PARQUET_PATH.exists() or \
               not CAND_EMBEDDINGS.exists() or \
-              not JD_EMBEDDING.exists()
+              not JD_EMBEDDING.exists() or \
+              not (ARTIFACTS_DIR / "cross_encoder_model").exists()
 
     if missing:
         print("[rank] Precomputed artifacts missing — running full pipeline…")
@@ -136,11 +136,7 @@ def _ensure_artifacts(candidates_path: Path, weights: dict) -> list[dict]:
         print(f"  Hard-disqualified: {df['is_hard_disqualified'].sum()}/{len(df)}")
 
         run_embeddings(parquet_path=OUTPUT_PARQUET)
-        return raw
 
-    # Artifacts exist — still need raw candidates for reasoning
-    print("[rank] Loading raw candidates for reasoning…")
-    return _load_jsonl(candidates_path)
 
 
 def _write_csv(output_path: Path, rows: list[dict]) -> None:
@@ -189,11 +185,10 @@ def run_ranking(
 
     weights = _load_weights()
 
-    # ---- Step 1: Ensure artifacts / load raw candidates -------------------
+    # ---- Step 1: Ensure artifacts -----------------------------------------
     t = time.perf_counter()
-    raw_candidates = _ensure_artifacts(candidates_path, weights)
-    cand_index = {c["candidate_id"]: c for c in raw_candidates}
-    print(f"[rank] Raw candidates loaded: {len(raw_candidates):,}  ({time.perf_counter()-t:.1f}s)")
+    _ensure_artifacts(candidates_path, weights)
+    print(f"[rank] Artifact check done ({time.perf_counter()-t:.1f}s)")
 
     # ---- Step 2: Load artifacts -------------------------------------------
     t = time.perf_counter()
@@ -237,6 +232,25 @@ def run_ranking(
 
     # ---- Step 6: Generate reasoning ---------------------------------------
     t = time.perf_counter()
+    
+    # Load raw candidate profiles only for the top-100 to keep memory low
+    top100_ids = set(top100["candidate_id"].tolist())
+    cand_index: dict[str, dict] = {}
+    with open(candidates_path, "rb") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                c = orjson.loads(line)
+                cid = c.get("candidate_id")
+                if cid in top100_ids:
+                    cand_index[cid] = c
+            except Exception:
+                pass
+            if len(cand_index) == len(top100_ids):
+                break
+                
     output_rows: list[dict] = []
     reasonings_seen: set[str] = set()
 
