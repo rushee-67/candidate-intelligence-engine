@@ -233,14 +233,23 @@ def run_ranking(
     # ---- Step 6: Generate reasoning ---------------------------------------
     t = time.perf_counter()
     
-    # Load raw candidate profiles only for the top-100 to keep memory low
+    # Load raw candidate profiles only for the top-100 to keep memory low.
+    # We do a fast split on the byte line to extract the candidate_id before parsing the full JSON.
     top100_ids = set(top100["candidate_id"].tolist())
     cand_index: dict[str, dict] = {}
     with open(candidates_path, "rb") as fh:
         for line in fh:
-            line = line.strip()
-            if not line:
+            try:
+                parts = line.split(b'"', 4)
+                if len(parts) > 3:
+                    cid_str = parts[3].decode("ascii", errors="ignore")
+                    if cid_str not in top100_ids:
+                        continue
+                else:
+                    continue
+            except Exception:
                 continue
+
             try:
                 c = orjson.loads(line)
                 cid = c.get("candidate_id")
