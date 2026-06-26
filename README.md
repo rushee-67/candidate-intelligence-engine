@@ -1,3 +1,13 @@
+---
+title: Redrob Candidate Ranker
+emoji: 🎯
+colorFrom: indigo
+colorTo: purple
+sdk: docker
+app_port: 7860
+pinned: false
+---
+
 # Redrob Candidate Ranker
 
 Ranks 100,000 candidates against a job description for a Senior AI Engineer role. Filters honeypots and disqualified profiles, then scores eligible candidates using semantic embeddings + skill trust + experience + availability signals. Outputs the top 100 as a validated CSV with one unique reasoning string per candidate.
