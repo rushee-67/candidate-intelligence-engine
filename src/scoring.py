@@ -290,17 +290,17 @@ def compute_scores(
     final_score: np.ndarray = np.where(excluded, 0.0, base_fit * availability)
 
     # ------------------------------------------------------------------ #
-    # 9.5. Two-stage Cross-Encoder Re-ranking on Top 1,000 Candidates     #
+    # 9.5. Two-stage Cross-Encoder Re-ranking on Top 300 Candidates      #
     # ------------------------------------------------------------------ #
     xe_model_dir = Path(CONFIG_PATH).parent.parent / "data" / "artifacts" / "cross_encoder_model"
     if xe_model_dir.exists():
-        print(f"[scoring] Running second-stage Cross-Encoder re-ranking on top 1000 candidates...")
-        # Get indices of top 1000 candidates based on first-stage final_score
+        print(f"[scoring] Running second-stage Cross-Encoder re-ranking on top 300 candidates...")
+        # Get indices of top 300 candidates based on first-stage final_score
         # We only re-rank candidate indices that are eligible (final_score > 0)
         sorted_indices = np.argsort(-final_score)
         
         eligible_indices = [idx for idx in sorted_indices if final_score[idx] > 0]
-        re_rank_indices = eligible_indices[:1000]
+        re_rank_indices = eligible_indices[:300]
         
         if re_rank_indices:
             from sentence_transformers import CrossEncoder

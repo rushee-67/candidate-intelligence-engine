@@ -380,7 +380,7 @@ def run_embeddings(
     parquet_path: Path = OUTPUT_PARQUET,
     jd_npy_path: Path = JD_EMBEDDING_NPY,
     cand_npy_path: Path = CANDIDATE_EMBEDDINGS_NPY,
-    model_name: str = "all-MiniLM-L6-v2",
+    model_name: str = "BAAI/bge-base-en-v1.5",
     batch_size: int = 512,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
@@ -398,9 +398,9 @@ def run_embeddings(
     parquet_path : Path
         Path to the candidate features parquet (must already exist).
     jd_npy_path : Path
-        Output path for the JD embedding (shape (384,)).
+        Output path for the JD embedding (shape (768,)).
     cand_npy_path : Path
-        Output path for candidate embeddings (shape (N, 384)).
+        Output path for candidate embeddings (shape (N, 768)).
     model_name : str
         HuggingFace model identifier for the sentence-transformer.
     batch_size : int
@@ -414,6 +414,8 @@ def run_embeddings(
     import time as _time
     from sentence_transformers import SentenceTransformer
     import torch
+    import json
+    import shutil
 
     # Use all available CPU cores for PyTorch inference
     n_threads = os.cpu_count() or 4
@@ -423,19 +425,41 @@ def run_embeddings(
     model = SentenceTransformer(model_name)
 
     # --- Cross-Encoder model caching ---
-    print("[embeddings] Loading and caching Cross-Encoder model...")
-    from sentence_transformers import CrossEncoder
-    xe_model = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
     xe_model_dir = parquet_path.parent / "cross_encoder_model"
-    xe_model.save(str(xe_model_dir))
-    print(f"[embeddings] Saved Cross-Encoder model to {xe_model_dir}")
+    is_valid_xe = False
+    xe_config_path = xe_model_dir / "config.json"
+    if xe_config_path.exists():
+        try:
+            with open(xe_config_path, "r") as f:
+                xe_config = json.load(f)
+            if xe_config.get("num_hidden_layers") == 12:
+                is_valid_xe = True
+        except Exception:
+            pass
+
+    if not is_valid_xe:
+        print("[embeddings] Downloading and caching 12-layer Cross-Encoder model...")
+        from sentence_transformers import CrossEncoder
+        xe_model = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-12-v2")
+        if xe_model_dir.exists():
+            shutil.rmtree(xe_model_dir)
+        xe_model.save(str(xe_model_dir))
+        print(f"[embeddings] Saved 12-layer Cross-Encoder model to {xe_model_dir}")
+    else:
+        print("[embeddings] 12-layer Cross-Encoder model already cached.")
 
     # --- JD anchor embedding ---
     print("[embeddings] Encoding JD anchor text…")
+    jd_text = JD_ANCHOR_TEXT
+    is_bge = "bge-" in model_name.lower()
+    if is_bge:
+        jd_text = "Represent this sentence for searching relevant passages: " + jd_text
+
     jd_emb: np.ndarray = model.encode(
-        JD_ANCHOR_TEXT,
+        jd_text,
         convert_to_numpy=True,
         show_progress_bar=False,
+        normalize_embeddings=is_bge,
     )
     jd_npy_path.parent.mkdir(parents=True, exist_ok=True)
     np.save(jd_npy_path, jd_emb)
@@ -447,19 +471,23 @@ def run_embeddings(
     blobs: list[str] = df_blobs["candidate_text_blob"].fillna("").tolist()
     n_total = len(blobs)
 
+    expected_dim = 768 if is_bge or "mpnet" in model_name.lower() else 384
+
     # Early exit if candidate embeddings are already fully computed
     if cand_npy_path.exists():
         try:
             cand_embs = np.load(cand_npy_path)
-            if len(cand_embs) == n_total:
+            if len(cand_embs) == n_total and cand_embs.shape[1] == expected_dim:
                 print(f"[embeddings] {cand_npy_path} already complete. Skipping encoding.")
-                xe_model_dir = parquet_path.parent / "cross_encoder_model"
-                if not xe_model_dir.exists():
-                    print("[embeddings] Loading and caching Cross-Encoder model...")
+                # Double check Cross-Encoder caching in early exit
+                if not is_valid_xe:
+                    print("[embeddings] Downloading and caching 12-layer Cross-Encoder model...")
                     from sentence_transformers import CrossEncoder
-                    xe_model = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
+                    xe_model = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-12-v2")
+                    if xe_model_dir.exists():
+                        shutil.rmtree(xe_model_dir)
                     xe_model.save(str(xe_model_dir))
-                    print(f"[embeddings] Saved Cross-Encoder model to {xe_model_dir}")
+                    print(f"[embeddings] Saved 12-layer Cross-Encoder model to {xe_model_dir}")
                 return jd_emb, cand_embs
         except Exception as e:
             print(f"[embeddings] Error checking candidate embeddings file: {e}. Will recompute.")
@@ -493,6 +521,7 @@ def run_embeddings(
             batch_size=len(chunk),
             show_progress_bar=False,
             convert_to_numpy=True,
+            normalize_embeddings=is_bge,
         )
         buffer.append(emb_chunk)
         batch_num += 1
@@ -500,10 +529,10 @@ def run_embeddings(
         done    = start_idx + i + len(chunk)
         elapsed = _time.perf_counter() - t0
         rate    = max((done - start_idx) / elapsed, 1e-6)
-        eta     = (n_total - done) / rate
+        meta_eta = (n_total - done) / rate
         print(
             f"  [{done:>7}/{n_total}]  {rate:>5.0f} cands/s  "
-            f"ETA {eta/60:>5.1f}min",
+            f"ETA {meta_eta/60:>5.1f}min",
             flush=True,
         )
 

@@ -87,55 +87,50 @@ def _load_jsonl(path: Path) -> list[dict]:
 
 def _ensure_artifacts(candidates_path: Path, weights: dict) -> None:
     """
-    If any precomputed artifact is missing, run the full precompute pipeline.
+    Checks that all precomputed artifacts are present, and that they have the correct
+    dimensions (768 for BGE base embeddings). If anything is missing, outdated, or has the
+    incorrect dimensions, prints a warning and exits instead of triggering expensive CPU precomputation.
     """
+    import json
+    
+    is_valid_xe = False
+    xe_config_path = ARTIFACTS_DIR / "cross_encoder_model" / "config.json"
+    if xe_config_path.exists():
+        try:
+            with open(xe_config_path, "r") as f:
+                config = json.load(f)
+            if config.get("num_hidden_layers") == 12:
+                is_valid_xe = True
+        except Exception:
+            pass
+
+    is_valid_emb = False
+    if CAND_EMBEDDINGS.exists():
+        try:
+            cand_embs = np.load(CAND_EMBEDDINGS, mmap_mode="r")
+            if cand_embs.shape[1] == 768:
+                is_valid_emb = True
+        except Exception:
+            pass
+
     missing = not PARQUET_PATH.exists() or \
               not CAND_EMBEDDINGS.exists() or \
               not JD_EMBEDDING.exists() or \
-              not (ARTIFACTS_DIR / "cross_encoder_model").exists()
+              not is_valid_xe or \
+              not is_valid_emb
 
     if missing:
-        print("[rank] Precomputed artifacts missing — running full pipeline…")
-        t = time.perf_counter()
-
-        from src.precompute_features import (
-            _iter_jsonl, extract_candidate_features,
-            OUTPUT_PARQUET, OUTPUT_DIR,
-        )
-        from src.honeypot_audit import add_honeypot_column
-        from src.disqualifier_filters import add_disqualifier_columns
-        from src.precompute_features import run_embeddings
-
-        raw: list[dict] = []
-        rows: list[dict] = []
-        total = 0
-        for candidate in _iter_jsonl(candidates_path):
-            raw.append(candidate)
-            rows.append(extract_candidate_features(candidate, weights))
-            total += 1
-            if total % 10_000 == 0:
-                print(f"  … flattened {total:,} candidates")
-
-        print(f"  Flattening done: {total:,} candidates in {time.perf_counter()-t:.1f}s")
-
-        df = pd.DataFrame(rows)
-        df["last_active_date"] = pd.to_datetime(df["last_active_date"], errors="coerce")
-        for col in ("open_to_work_flag", "willing_to_relocate",
-                    "verified_email", "verified_phone", "linkedin_connected"):
-            df[col] = df[col].astype(bool)
-
-        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-        df.to_parquet(OUTPUT_PARQUET, index=False, engine="pyarrow")
-
-        df = add_honeypot_column(df, raw, weights)
-        df.to_parquet(OUTPUT_PARQUET, index=False, engine="pyarrow")
-        print(f"  Honeypots: {df['is_honeypot'].sum()}/{len(df)}")
-
-        df = add_disqualifier_columns(df, raw, weights)
-        df.to_parquet(OUTPUT_PARQUET, index=False, engine="pyarrow")
-        print(f"  Hard-disqualified: {df['is_hard_disqualified'].sum()}/{len(df)}")
-
-        run_embeddings(parquet_path=OUTPUT_PARQUET)
+        print("[rank] ERROR: Precomputed artifacts are missing, outdated, or have incorrect dimensions.")
+        if CAND_EMBEDDINGS.exists() and not is_valid_emb:
+            try:
+                cand_embs = np.load(CAND_EMBEDDINGS, mmap_mode="r")
+                print(f"[rank] Expected 768-dimensional embeddings (BGE-base), but found {cand_embs.shape[1]}-dimensional embeddings.")
+            except Exception:
+                pass
+        if not is_valid_xe:
+            print("[rank] The 12-layer Cross-Encoder model is not cached or is invalid.")
+        print("[rank] CPU precomputation is disabled to prevent long execution times. Please run precomputation on GPU first.")
+        sys.exit(1)
 
 
 
@@ -215,6 +210,9 @@ def run_ranking(
         (~scored["is_honeypot"].astype(bool)) &
         (~scored["is_hard_disqualified"].astype(bool))
     ].copy()
+
+    # Round final_score to 6 decimal places to prevent float-rounding tie-breaker mismatches in validation
+    eligible["final_score"] = eligible["final_score"].round(6)
 
     eligible = eligible.sort_values(
         by=["final_score", "candidate_id"],
