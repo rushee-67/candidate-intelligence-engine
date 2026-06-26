@@ -144,9 +144,7 @@ The integration test suite ([`tests/test_ranking_order.py`](file:///home/user/Do
 
 ## 9. Compute Profile
 
-Performance benchmarks recorded on the candidate dataset:
-* **Ingest Size:** 100,000 candidate profiles
-* **Inference Platform:** CPU-only (CUDA disabled)
-* **Offline Precomputation Time:** ~85 minutes (SentenceTransformer text encoding and Parquet feature engineering)
-* **Online Ranking Pipeline:** **17.5 seconds** (scoring, filtering, deduplicating reasonings, and generating outputs for all 100,000 candidates).
-* **Reasoning Count:** 100 top candidates with 100% unique justification strings.
+- Stage 1: BAAI/bge-base-en-v1.5 bi-encoder (768-dim), all 100K
+- Stage 2: ms-marco-MiniLM-L-12-v2 cross-encoder, top 300
+- Online Ranking Pipeline: 2m58s (~3 minutes) on CPU
+- Memory: <1.5GB peak
