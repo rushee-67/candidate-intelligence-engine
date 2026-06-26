@@ -31,6 +31,39 @@ if str(PROJECT_ROOT) not in sys.path:
 from src.scoring import compute_scores, _load_weights
 from src.reasoning import generate_reasoning
 
+def extract_features_on_the_fly(candidates: list[dict], weights: dict) -> pd.DataFrame:
+    from src.precompute_features import extract_candidate_features
+    from src.honeypot_audit import add_honeypot_column
+    from src.disqualifier_filters import add_disqualifier_columns
+
+    rows = []
+    for c in candidates:
+        rows.append(extract_candidate_features(c, weights))
+
+    df = pd.DataFrame(rows)
+    df["last_active_date"] = pd.to_datetime(df["last_active_date"], errors="coerce")
+    for col in ("open_to_work_flag", "willing_to_relocate",
+                "verified_email", "verified_phone", "linkedin_connected"):
+        if col in df.columns:
+            df[col] = df[col].astype(bool)
+
+    df = add_honeypot_column(df, candidates, weights)
+    df = add_disqualifier_columns(df, candidates, weights)
+    return df
+
+@st.cache_resource
+def load_sentence_transformer():
+    from sentence_transformers import SentenceTransformer
+    return SentenceTransformer("all-MiniLM-L6-v2")
+
+@st.cache_data
+def encode_on_the_fly(candidate_blobs: list[str]):
+    model = load_sentence_transformer()
+    from src.jd_anchor import JD_ANCHOR_TEXT
+    jd_emb = model.encode(JD_ANCHOR_TEXT, convert_to_numpy=True)
+    cand_embs = model.encode(candidate_blobs, convert_to_numpy=True, batch_size=256, show_progress_bar=False)
+    return jd_emb, cand_embs
+
 def main():
     # Page setup
     st.set_page_config(page_title="Redrob Candidate Ranker", layout="wide")
@@ -38,35 +71,35 @@ def main():
 
     # Sidebar
     st.sidebar.title("Configuration")
-    st.sidebar.markdown(
-        "**Model:** `all-MiniLM-L6-v2`\n\n"
-        "**Scoring:** hybrid embedding + skill-trust + experience + availability"
-    )
-
-    # 1. Load precomputed artifacts
+    
+    # 1. Check if precomputed artifacts exist
     parquet_path = PROJECT_ROOT / "data" / "artifacts" / "candidate_features.parquet"
     cand_emb_path = PROJECT_ROOT / "data" / "artifacts" / "candidate_embeddings.npy"
     jd_emb_path = PROJECT_ROOT / "data" / "artifacts" / "jd_embedding.npy"
 
-    if not parquet_path.exists() or not cand_emb_path.exists() or not jd_emb_path.exists():
-        st.error(
-            "Precomputed artifacts are missing. "
-            "Please run the ranking pipeline or precomputation first."
+    artifacts_exist = parquet_path.exists() and cand_emb_path.exists() and jd_emb_path.exists()
+
+    if artifacts_exist:
+        st.sidebar.success("Precomputed database loaded (Fast Lookup Mode)")
+        st.sidebar.markdown(
+            "**Model:** `BAAI/bge-base-en-v1.5` (768-dim) / Stage 2 `MiniLM-L-12`\n\n"
+            "**Scoring:** hybrid embedding + skill-trust + experience + availability"
         )
-        return
+        @st.cache_data
+        def load_artifacts():
+            df_features = pd.read_parquet(parquet_path)
+            cand_embs = np.load(cand_emb_path)
+            jd_emb = np.load(jd_emb_path)
+            return df_features, cand_embs, jd_emb
 
-    # Load artifacts (cache to avoid reloading on every rerun)
-    @st.cache_data
-    def load_artifacts():
-        df_features = pd.read_parquet(parquet_path)
-        cand_embs = np.load(cand_emb_path)
-        jd_emb = np.load(jd_emb_path)
-        return df_features, cand_embs, jd_emb
-
-    df_features, cand_embs, jd_emb = load_artifacts()
-
-    # Create mapping from candidate_id to index in the precomputed arrays
-    id_to_index = {cid: idx for idx, cid in enumerate(df_features["candidate_id"])}
+        df_features, cand_embs, jd_emb = load_artifacts()
+        id_to_index = {cid: idx for idx, cid in enumerate(df_features["candidate_id"])}
+    else:
+        st.sidebar.warning("Demo Mode: Running on-the-fly extraction & encoding using `all-MiniLM-L6-v2`")
+        st.sidebar.markdown(
+            "**Model:** `all-MiniLM-L6-v2` (384-dim) on-the-fly\n\n"
+            "**Scoring:** hybrid embedding + skill-trust + experience + availability"
+        )
 
     # 2. File uploader
     uploaded_file = st.file_uploader(
@@ -85,22 +118,36 @@ def main():
             st.error("JSON file must contain a list of candidate records.")
             return
 
-        # Find matching candidate profiles in precomputed features and embeddings
-        uploaded_ids = [c.get("candidate_id") for c in candidates if c.get("candidate_id")]
-        
-        indices = [id_to_index[cid] for cid in uploaded_ids if cid in id_to_index]
+        weights = _load_weights()
 
-        if not indices:
-            st.warning("None of the uploaded candidate IDs match the precomputed features.")
-            return
+        if artifacts_exist:
+            # Find matching candidate profiles in precomputed features and embeddings
+            uploaded_ids = [c.get("candidate_id") for c in candidates if c.get("candidate_id")]
+            indices = [id_to_index[cid] for cid in uploaded_ids if cid in id_to_index]
 
-        # Prepare matching subsets
-        uploaded_df = df_features.iloc[indices].copy().reset_index(drop=True)
-        uploaded_embs = cand_embs[indices]
+            if not indices:
+                st.warning("None of the uploaded candidate IDs match the precomputed database.")
+                return
+
+            # Prepare matching subsets
+            uploaded_df = df_features.iloc[indices].copy().reset_index(drop=True)
+            uploaded_embs = cand_embs[indices]
+        else:
+            # Compute everything on-the-fly
+            with st.spinner("Extracting candidate features..."):
+                uploaded_df = extract_features_on_the_fly(candidates, weights)
+
+            with st.spinner("Encoding profiles on-the-fly..."):
+                candidate_blobs = uploaded_df["candidate_text_blob"].fillna("").tolist()
+                try:
+                    jd_emb, uploaded_embs = encode_on_the_fly(candidate_blobs)
+                except Exception as e:
+                    st.error(f"Error encoding embeddings on the fly: {e}")
+                    return
 
         # 3. Run Pipeline
-        weights = _load_weights()
-        scored = compute_scores(uploaded_df, uploaded_embs, jd_emb, weights)
+        with st.spinner("Calculating fit scores..."):
+            scored = compute_scores(uploaded_df, uploaded_embs, jd_emb, weights)
 
         # Exclude honeypots and hard disqualified from the ranked display list
         eligible = scored[
