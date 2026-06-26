@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import subprocess, sys
 subprocess.run([sys.executable, "-m", "pip", "install",
     "sentence-transformers", "torch", "pandas", 
@@ -13,8 +15,6 @@ This file implements the interactive web application used to:
 - Display score breakdowns (title, skill trust, experience, location, etc.) for debugging.
 - Render candidate details alongside their generated reasoning.
 """
-
-from __future__ import annotations
 
 import sys
 import json
