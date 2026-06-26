@@ -1,5 +1,7 @@
 # Redrob Candidate Ranker
 
+[![Hugging Face Spaces](https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Spaces-blue)](https://huggingface.co/spaces/rsxx7/redrob-ranker)
+
 Ranks 100,000 candidates against a job description for a Senior AI Engineer role. Filters honeypots and disqualified profiles, then scores eligible candidates using semantic embeddings + skill trust + experience + availability signals. Outputs the top 100 as a validated CSV with one unique reasoning string per candidate.
 
 ---
