@@ -40,7 +40,9 @@ Execute the pipeline commands in order:
    ```bash
    python src/precompute_features.py
    ```
-   * *Produces:* `data/artifacts/candidate_features.parquet`, `data/artifacts/candidate_embeddings.npy`, and `data/artifacts/jd_embedding.npy`. (Embeds the JD and candidate profiles using `all-MiniLM-L6-v2`).
+   * *Produces:* `data/artifacts/candidate_features.parquet`, `data/artifacts/candidate_embeddings.npy`, and `data/artifacts/jd_embedding.npy`. (Embeds the JD and candidate profiles using `BAAI/bge-base-en-v1.5` (768-dim). 
+   Requires GPU for precomputation (~40 min on T4). Downloads and caches 
+   cross-encoder/ms-marco-MiniLM-L-12-v2 for Stage 2 re-ranking.)
 
 2. **Run Scoring and Ranking**
    ```bash
