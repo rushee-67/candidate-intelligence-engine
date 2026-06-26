@@ -1,13 +1,3 @@
----
-title: Redrob Candidate Ranker
-emoji: 🎯
-colorFrom: indigo
-colorTo: purple
-sdk: docker
-app_port: 7860
-pinned: false
----
-
 # Redrob Candidate Ranker
 
 Ranks 100,000 candidates against a job description for a Senior AI Engineer role. Filters honeypots and disqualified profiles, then scores eligible candidates using semantic embeddings + skill trust + experience + availability signals. Outputs the top 100 as a validated CSV with one unique reasoning string per candidate.
@@ -16,20 +6,35 @@ Ranks 100,000 candidates against a job description for a Senior AI Engineer role
 
 ## 1. Project Structure
 
-* **`config/weights.yaml`**: Holds all scoring weights, threshold constants, location mapping weights, and honeypot flags.
-* **`sandbox/app.py`**: Streamlit application providing a web interface to upload small candidate JSON files and visually inspect scored and ranked results.
-* **`src/__init__.py`**: Initializes the `src` package.
-* **`src/disqualifier_filters.py`**: Implementation of hard exclusions (pure research, LangChain-only, non-coding architects) and soft negative flags (consulting-only, title chasing, domain mismatch).
-* **`src/honeypot_audit.py`**: Audits candidates for profile logical anomalies (expert skill with no duration, years of experience mismatches, impossible career durations, study-work timeline overlaps).
-* **`src/jd_anchor.py`**: Defines the target job description (JD) responsibility text, normalized required skills, acceptable locations, and relevance keywords.
-* **`src/precompute_features.py`**: Handles streaming JSONL candidate ingestion, parses features, runs honeypot and disqualifier audits, and batch-encodes candidate text profiles using a SentenceTransformer.
-* **`src/rank.py`**: Primary entry point to load precomputed features and embeddings, run ranking scoring, select top 100 candidates, resolve duplicate reasonings, and output `submission.csv`.
-* **`src/reasoning.py`**: Formulates unique, data-backed 1-2 sentence summaries justifying candidate ranks based strictly on their profile fields (preventing hallucinations).
-* **`src/scoring.py`**: Computes final scores using vector similarity of candidate profiles vs the JD, normalized experience durations, skill trust scores, location suitability, and engagement signals.
-* **`submission_metadata.yaml`**: Metadata file declaring reproduce commands, compute settings, approach methodology, and declarations.
-* **`tests/__init__.py`**: Initializer for the `tests` package.
-* **`tests/fixtures.py`**: Contains 6 synthetic candidate profiles mimicking specific test archetypes (ideal, keyword stuffer, honeypot, tier 5 fit, title chaser, consulting only).
-* **`tests/test_ranking_order.py`**: Integration tests confirming that candidate ordering, honeypot exclusion, and soft penalties function correctly against mock profiles.
+```text
+redrob-ranker/
+├── config/
+│   └── weights.yaml             # Scoring weights & thresholds
+├── resources/
+│   ├── candidates.jsonl         # 100K raw candidate profiles
+│   ├── sample_candidates.json   # Tiny subset for testing & sandbox
+│   └── validate_submission.py   # Challenge format validation script
+├── src/
+│   ├── disqualifier_filters.py  # Hard exclusions & soft negatives
+│   ├── honeypot_audit.py        # Candidate fraud & logical audits
+│   ├── jd_anchor.py             # Target JD & job keyword mappings
+│   ├── precompute_features.py   # Ingestion, feature extraction, BGE embedding
+│   ├── rank.py                  # Orchestration script (scoring, top 100 selection)
+│   ├── reasoning.py             # Generates unique candidate explanations
+│   └── scoring.py               # Calculates Stage 1 & Stage 2 scores
+├── tests/
+│   ├── fixtures.py              # Mock candidate archetypes
+│   └── test_ranking_order.py    # Suite verifying score ranking & exclusion rules
+├── sandbox/
+│   └── app.py                   # Streamlit app (local)
+├── app.py                       # Streamlit entry point (HF Spaces)
+├── Dockerfile                   # Docker build config for HF Spaces
+├── packages.txt                 # Debian dependencies for HF Spaces
+├── README.md                    # Project documentation
+├── requirements.txt             # Pip dependencies
+├── requirements-spaces.txt      # Pip dependencies for HF Spaces
+└── submission_metadata.yaml     # Approach and metadata declaration
+```
 
 ---
 
