@@ -1,0 +1,8 @@
+sentence-transformers==2.7.0
+torch==2.3.0
+pandas
+pyarrow
+numpy
+orjson
+pyyaml
+streamlit

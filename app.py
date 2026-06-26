@@ -1,3 +1,9 @@
+import subprocess, sys
+subprocess.run([sys.executable, "-m", "pip", "install",
+    "sentence-transformers", "torch", "pandas", 
+    "pyarrow", "numpy", "orjson", "pyyaml"], 
+    capture_output=True)
+
 """
 Streamlit Sandbox Application.
 
@@ -18,7 +24,7 @@ import pandas as pd
 import streamlit as st
 
 # Ensure project root is on sys.path so 'src.*' imports work
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 

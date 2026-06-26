@@ -10,8 +10,8 @@ ENV HOME=/home/user \
 WORKDIR $HOME/app
 
 # Copy requirements and install
-COPY --chown=user requirements.txt .
-RUN pip install --no-cache-dir --user -r requirements.txt
+COPY --chown=user requirements-spaces.txt .
+RUN pip install --no-cache-dir --user -r requirements-spaces.txt
 
 # Copy application files (app.py, src, config, data, etc.)
 COPY --chown=user . .
